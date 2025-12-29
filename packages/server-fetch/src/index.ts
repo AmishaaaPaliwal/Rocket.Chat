@@ -7,7 +7,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import fetch, { Response } from 'node-fetch';
 import { getProxyForUrl } from 'proxy-from-env';
 
-import { checkForSsrf } from './checkForSsrf';
+import { checkForSsrfWithIp } from './checkForSsrf';
 import { parseRequestOptions } from './parsers';
 import type { ExtendedFetchOptions } from './types';
 
@@ -16,6 +16,7 @@ const MAX_REDIRECTS = 5;
 function getFetchAgent<U extends string>(
 	url: U,
 	allowSelfSignedCerts?: boolean,
+	originalHostname?: string,
 ): http.Agent | https.Agent | null | HttpsProxyAgent<U> | HttpProxyAgent<U> {
 	const isHttps = /^https/.test(url);
 
@@ -33,9 +34,15 @@ function getFetchAgent<U extends string>(
 		return new http.Agent();
 	}
 
-	return new https.Agent({
+	const agentOptions: https.AgentOptions = {
 		rejectUnauthorized: false,
-	});
+	};
+
+	if (originalHostname) {
+		agentOptions.servername = originalHostname;
+	}
+
+	return new https.Agent(agentOptions);
 }
 
 function getTimeout(timeout?: number) {
@@ -45,20 +52,64 @@ function getTimeout(timeout?: number) {
 	return { controller, timeoutId };
 }
 
+const extractHostname = (urlString: string): string | null => {
+	try {
+		const { hostname } = new URL(urlString);
+		if (hostname.startsWith('[') && hostname.endsWith(']')) {
+			return hostname.slice(1, -1);
+		}
+		return hostname;
+	} catch {
+		return null;
+	}
+};
+
+const buildPinnedUrl = (originalUrl: string, resolvedIp: string): string => {
+	try {
+		const url = new URL(originalUrl);
+		const ipHostname = resolvedIp.includes(':') ? `[${resolvedIp}]` : resolvedIp;
+		url.hostname = ipHostname;
+		return url.toString();
+	} catch {
+		return originalUrl;
+	}
+};
+
 export async function serverFetch(input: string, options?: ExtendedFetchOptions, allowSelfSignedCerts?: boolean): Promise<Response> {
 	let currentUrl = input;
 
 	for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-		// eslint-disable-next-line no-await-in-loop
-		if (!options?.ignoreSsrfValidation && !(await checkForSsrf(currentUrl))) {
-			throw new Error(`SSRF validation failed for URL: ${currentUrl}`);
+		let pinnedUrl = currentUrl;
+		let originalHostname: string | undefined;
+		let resolvedIp: string | undefined;
+
+		if (!options?.ignoreSsrfValidation) {
+			// eslint-disable-next-line no-await-in-loop
+			const ssrfResult = await checkForSsrfWithIp(currentUrl);
+			if (!ssrfResult.allowed) {
+				throw new Error(`SSRF validation failed for URL: ${currentUrl}`);
+			}
+			resolvedIp = ssrfResult.resolvedIp;
+
+			if (resolvedIp) {
+				const extractedHostname = extractHostname(currentUrl);
+
+				if (extractedHostname) {
+					originalHostname = extractedHostname;
+					const isDirectIp = /^(\d+\.\d+\.\d+\.\d+|\[?[0-9a-fA-F:]+]?)$/.test(extractedHostname);
+
+					if (!isDirectIp) {
+						pinnedUrl = buildPinnedUrl(currentUrl, resolvedIp);
+					}
+				}
+			}
 		}
 
-		const agent = getFetchAgent(currentUrl, allowSelfSignedCerts);
+		const agent = getFetchAgent(pinnedUrl, allowSelfSignedCerts, originalHostname);
 		const { controller, timeoutId } = getTimeout(options?.timeout);
 
 		const params = new URLSearchParams(options?.params);
-		const url = new URL(currentUrl);
+		const url = new URL(pinnedUrl);
 
 		if (params.toString()) {
 			params.forEach((value, key) => {
@@ -68,12 +119,44 @@ export async function serverFetch(input: string, options?: ExtendedFetchOptions,
 			});
 		}
 
+		const parsedOptions = parseRequestOptions(options) || {};
+		const existingHeaders = parsedOptions.headers || {};
+		const headers: Record<string, string> = {};
+
+		if (existingHeaders && typeof existingHeaders === 'object') {
+			if (existingHeaders instanceof Headers) {
+				existingHeaders.forEach((value, key) => {
+					headers[key] = value;
+				});
+			} else if (Array.isArray(existingHeaders)) {
+				existingHeaders.forEach(([key, value]) => {
+					headers[key] = Array.isArray(value) ? value.join(', ') : value;
+				});
+			} else {
+				Object.assign(headers, existingHeaders);
+			}
+		}
+
+		if (originalHostname && resolvedIp) {
+			const isDirectIp = /^(\d+\.\d+\.\d+\.\d+|\[?[0-9a-fA-F:]+]?)$/.test(originalHostname);
+			if (!isDirectIp) {
+				try {
+					const originalUrl = new URL(currentUrl);
+					const hostHeader = originalUrl.port ? `${originalHostname}:${originalUrl.port}` : originalHostname;
+					headers.Host = hostHeader;
+				} catch {
+					headers.Host = originalHostname;
+				}
+			}
+		}
+
 		// eslint-disable-next-line no-await-in-loop
 		const response = await fetch(url.toString(), {
 			// @ts-expect-error - This complained when types were moved to file :/
 			signal: controller.signal,
 			redirect: 'manual',
-			...parseRequestOptions(options),
+			...parsedOptions,
+			headers,
 			...(agent ? { agent } : {}),
 		}).finally(() => {
 			if (timeoutId) {

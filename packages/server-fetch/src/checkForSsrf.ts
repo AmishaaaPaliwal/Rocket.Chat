@@ -72,17 +72,21 @@ const domainPattern = /^(?!-)(?!.*--)[A-Za-z0-9-]{1,63}(?<!-)\.?([A-Za-z0-9-]{2,
 const isValidDomain = (domain: string) => domainPattern.test(domain);
 
 export const checkForSsrf = async (input: string): Promise<boolean> => {
+	const result = await checkForSsrfWithIp(input);
+	return result.allowed;
+};
+
+export const checkForSsrfWithIp = async (input: string): Promise<{ allowed: boolean; resolvedIp?: string }> => {
 	let ipOrDomain: string;
 
 	try {
 		const url = new URL(input);
-		if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') return { allowed: false };
 		ipOrDomain = url.hostname;
 	} catch {
 		ipOrDomain = input;
 	}
 
-	// Strip brackets from IPv6 addresses
 	if (ipOrDomain.startsWith('[') && ipOrDomain.endsWith(']')) {
 		ipOrDomain = ipOrDomain.slice(1, -1);
 	}
@@ -90,18 +94,19 @@ export const checkForSsrf = async (input: string): Promise<boolean> => {
 	const ipValid = isIpValid(ipOrDomain);
 	const domainValid = isValidDomain(ipOrDomain);
 
-	if (!ipValid && !domainValid) return false;
-	if (ipValid && isIpInAnyRange(ipOrDomain)) return false;
-	if (domainValid && /metadata\.google\.internal/i.test(ipOrDomain)) return false;
+	if (!ipValid && !domainValid) return { allowed: false };
+	if (ipValid && isIpInAnyRange(ipOrDomain)) return { allowed: false };
+	if (domainValid && /metadata\.google\.internal/i.test(ipOrDomain)) return { allowed: false };
 
 	if (domainValid) {
 		try {
 			const resolvedIp = await nslookup(ipOrDomain);
-			if (isIpInAnyRange(resolvedIp)) return false;
+			if (isIpInAnyRange(resolvedIp)) return { allowed: false };
+			return { allowed: true, resolvedIp };
 		} catch {
-			return false;
+			return { allowed: false };
 		}
 	}
 
-	return true;
+	return { allowed: true, resolvedIp: ipOrDomain };
 };
