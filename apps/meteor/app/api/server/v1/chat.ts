@@ -237,7 +237,7 @@ const chatEndpoints = API.v1
 				throw new Meteor.Error('error-message-not-found', 'The provided "messageId" does not match any existing message.');
 			}
 
-			const pinnedMessage = await pinMessage(msg, this.userId);
+			const pinnedMessage = await pinMessage(msg, this.user);
 
 			const [message] = await normalizeMessagesForUser([pinnedMessage], this.userId);
 
@@ -275,7 +275,7 @@ const chatEndpoints = API.v1
 				throw new Meteor.Error('error-message-not-found', 'The provided "messageId" does not match any existing message.');
 			}
 
-			await unpinMessage(this.userId, msg);
+			await unpinMessage(this.user, msg);
 
 			return API.v1.success();
 		},
