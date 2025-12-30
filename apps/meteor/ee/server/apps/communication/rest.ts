@@ -355,10 +355,7 @@ export class AppsRestApi {
 						return API.v1.internalError('private_app_install_disabled');
 					}
 
-					const user = orchestrator
-						?.getConverters()
-						?.get('users')
-						?.convertToApp(await Meteor.userAsync());
+					const user = orchestrator?.getConverters()?.get('users')?.convertToApp(this.user);
 
 					const aff = await manager.add(buff, {
 						...(marketplaceInfo && { marketplaceInfo }),
@@ -860,10 +857,7 @@ export class AppsRestApi {
 						return API.v1.failure({ error: 'Cannot_Update_Exempt_App' });
 					}
 
-					const user = orchestrator
-						?.getConverters()
-						?.get('users')
-						?.convertToApp(await Meteor.userAsync());
+					const user = orchestrator?.getConverters()?.get('users')?.convertToApp(this.user);
 
 					const aff = await manager.update(buff, permissionsGranted, { user, loadApp: true });
 					const info: IAppInfo & { status?: AppStatus } = aff.getAppInfo();
@@ -899,10 +893,7 @@ export class AppsRestApi {
 						return API.v1.notFound(`No App found by the id of: ${this.urlParams.id}`);
 					}
 
-					const user = orchestrator
-						?.getConverters()
-						?.get('users')
-						.convertToApp(await Meteor.userAsync());
+					const user = orchestrator?.getConverters()?.get('users').convertToApp(this.user);
 
 					const info: IAppInfo & { status?: AppStatus } = prl.getInfo();
 					try {
