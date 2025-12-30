@@ -1,5 +1,7 @@
+import type { ValidateFunction } from 'ajv';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
+import * as z from 'zod';
 
 const ajv = new Ajv({
 	coerceTypes: true,
@@ -23,87 +25,56 @@ ajv.addKeyword({
 });
 export { ajv };
 
-type BadRequestErrorResponse = {
-	success: false;
-	error?: string;
-	errorType?: string;
-	stack?: string;
-	details?: string | object;
-};
+export const createValidatorFor = <Z extends z.ZodType>(schema: Z): ValidateFunction<z.infer<Z>> =>
+	ajv.compile<z.infer<Z>>(schema.toJSONSchema({ target: 'openapi-3.0', io: 'input' }));
 
-const BadRequestErrorResponseSchema = {
-	type: 'object',
-	properties: {
-		success: { type: 'boolean', enum: [false] },
-		stack: { type: 'string' },
-		error: { type: 'string' },
-		errorType: { type: 'string' },
-		details: { anyOf: [{ type: 'string' }, { type: 'object' }] },
-	},
-	required: ['success'],
-	additionalProperties: false,
-};
+export const SuccessResponseSchema = z.object({
+	success: z.literal(true).meta({ description: 'Indicates whether the request was successful.' }),
+});
 
-export const validateBadRequestErrorResponse = ajv.compile<BadRequestErrorResponse>(BadRequestErrorResponseSchema);
+// TODO remove when all success responses are properly typed
+export const VoidSuccessResponseSchema = z.codec(SuccessResponseSchema, z.void(), {
+	encode: () => ({ success: true }) as const,
+	decode: () => undefined,
+});
 
-type UnauthorizedErrorResponse = {
-	success: false;
-	status?: string;
-	message?: string;
-	error?: string;
-	errorType?: string;
-};
+// TODO remove when all success responses are properly typed
+export const createSuccessResponseSchema = <Z extends z.ZodType>(response: Z) =>
+	z.codec(SuccessResponseSchema.and(response), response, {
+		encode: (output) => Object.assign({ success: true } as const, output as z.core.output<Z>),
+		decode: ({ success: _, ...input }) => input as z.core.input<Z>,
+	});
 
-const UnauthorizedErrorResponseSchema = {
-	type: 'object',
-	properties: {
-		success: { type: 'boolean', enum: [false] },
-		status: { type: 'string' },
-		message: { type: 'string' },
-		error: { type: 'string' },
-		errorType: { type: 'string' },
-	},
-	required: ['success'],
-	additionalProperties: false,
-};
+export const FailureResponseSchema = z.object({
+	success: z.literal(false),
+});
 
-export const validateUnauthorizedErrorResponse = ajv.compile<UnauthorizedErrorResponse>(UnauthorizedErrorResponseSchema);
+export const BadRequestErrorResponseSchema = FailureResponseSchema.extend({
+	error: z.string().optional(),
+	errorType: z.string().optional(),
+	stack: z.string().optional(),
+	details: z.union([z.string(), z.record(z.any(), z.any())]).optional(),
+});
 
-type ForbiddenErrorResponse = {
-	success: false;
-	status?: string;
-	message?: string;
-	error?: string;
-	errorType?: string;
-};
+export const UnauthorizedErrorResponseSchema = FailureResponseSchema.extend({
+	error: z.string().optional(),
+	errorType: z.string().optional(),
+	status: z.string().optional(),
+	message: z.string().optional(),
+});
 
-const ForbiddenErrorResponseSchema = {
-	type: 'object',
-	properties: {
-		success: { type: 'boolean', enum: [false] },
-		status: { type: 'string' },
-		message: { type: 'string' },
-		error: { type: 'string' },
-		errorType: { type: 'string' },
-	},
-	required: ['success'],
-	additionalProperties: false,
-};
+export const ForbiddenErrorResponseSchema = FailureResponseSchema.extend({
+	error: z.string().optional(),
+	errorType: z.string().optional(),
+	status: z.string().optional(),
+	message: z.string().optional(),
+});
 
-export const validateForbiddenErrorResponse = ajv.compile<ForbiddenErrorResponse>(ForbiddenErrorResponseSchema);
+export const NotFoundErrorResponseSchema = FailureResponseSchema.extend({
+	error: z.string(),
+});
 
-type NotFoundErrorResponse = {
-	success: false;
-	error: string;
-};
-
-const NotFoundErrorResponseSchema = {
-	type: 'object',
-	properties: {
-		success: { type: 'boolean', enum: [false] },
-		error: { type: 'string' },
-	},
-	required: ['success', 'error'],
-};
-
-export const validateNotFoundErrorResponse = ajv.compile<NotFoundErrorResponse>(NotFoundErrorResponseSchema);
+export const validateBadRequestErrorResponse = createValidatorFor(BadRequestErrorResponseSchema);
+export const validateUnauthorizedErrorResponse = createValidatorFor(UnauthorizedErrorResponseSchema);
+export const validateForbiddenErrorResponse = createValidatorFor(ForbiddenErrorResponseSchema);
+export const validateNotFoundErrorResponse = createValidatorFor(NotFoundErrorResponseSchema);

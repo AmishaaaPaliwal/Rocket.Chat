@@ -370,6 +370,10 @@ export class APIClass<TBasePath extends string = '', TOperations extends Record<
 		};
 	}
 
+	public forbidden(): ForbiddenResult<'forbidden' | 'unauthorized'>;
+
+	public forbidden<T>(msg: T): ForbiddenResult<T>;
+
 	public forbidden<T>(msg?: T): ForbiddenResult<T> {
 		return {
 			statusCode: 403,
