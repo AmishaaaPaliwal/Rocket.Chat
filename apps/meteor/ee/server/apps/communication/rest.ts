@@ -250,7 +250,7 @@ export class AppsRestApi {
 		// WE NEED TO MOVE EACH ENDPOINT HANDLER TO IT'S OWN FILE
 		this.api.addRoute(
 			'',
-			{ authRequired: true, permissionsRequired: ['manage-apps'] },
+			{ authRequired: true, permissionsRequired: ['manage-apps'], applyMeteorContext: true },
 			{
 				async post() {
 					let buff;
@@ -713,7 +713,7 @@ export class AppsRestApi {
 
 		this.api.addRoute(
 			':id',
-			{ authRequired: true, permissionsRequired: ['manage-apps'] },
+			{ authRequired: true, permissionsRequired: ['manage-apps'], applyMeteorContext: true },
 			{
 				async get() {
 					if (this.queryParams.marketplace && this.queryParams.version) {
