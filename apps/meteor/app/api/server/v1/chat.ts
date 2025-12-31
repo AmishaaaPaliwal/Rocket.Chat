@@ -1,11 +1,9 @@
-import type { IMessage, IThreadMainMessage } from '@rocket.chat/core-typings';
+import { IMessageSchema, IRoomSchema, type IMessage, type IThreadMainMessage } from '@rocket.chat/core-typings';
 import { MessageTypes } from '@rocket.chat/message-types';
 import { Messages, Users, Rooms, Subscriptions } from '@rocket.chat/models';
 import {
-	ajv,
 	isChatReportMessageProps,
 	isChatGetURLPreviewProps,
-	isChatUpdateProps,
 	isChatGetThreadsListProps,
 	isChatDeleteProps,
 	isChatSyncMessagesProps,
@@ -27,11 +25,15 @@ import {
 	isChatSyncThreadMessagesProps,
 	isChatGetStarredMessagesProps,
 	isChatGetDiscussionsProps,
-	validateBadRequestErrorResponse,
-	validateUnauthorizedErrorResponse,
+	createValidatorFor,
+	createSuccessResponseSchema,
+	BadRequestErrorResponseSchema,
+	UnauthorizedErrorResponseSchema,
+	VoidSuccessResponseSchema,
 } from '@rocket.chat/rest-typings';
 import { escapeRegExp } from '@rocket.chat/string-helpers';
 import { Meteor } from 'meteor/meteor';
+import * as z from 'zod';
 
 import { reportMessage } from '../../../../server/lib/moderation/reportMessage';
 import { ignoreUser } from '../../../../server/methods/ignoreUser';
@@ -171,63 +173,26 @@ API.v1.addRoute(
 	},
 );
 
-type ChatPinMessage = {
-	messageId: IMessage['_id'];
-};
-
-type ChatUnpinMessage = {
-	messageId: IMessage['_id'];
-};
-
-const ChatPinMessageSchema = {
-	type: 'object',
-	properties: {
-		messageId: {
-			type: 'string',
-			minLength: 1,
-		},
-	},
-	required: ['messageId'],
-	additionalProperties: false,
-};
-
-const ChatUnpinMessageSchema = {
-	type: 'object',
-	properties: {
-		messageId: {
-			type: 'string',
-			minLength: 1,
-		},
-	},
-	required: ['messageId'],
-	additionalProperties: false,
-};
-
-const isChatPinMessageProps = ajv.compile<ChatPinMessage>(ChatPinMessageSchema);
-
-const isChatUnpinMessageProps = ajv.compile<ChatUnpinMessage>(ChatUnpinMessageSchema);
-
 const chatEndpoints = API.v1
 	.post(
 		'chat.pinMessage',
 		{
 			authRequired: true,
-			body: isChatPinMessageProps,
-			response: {
-				400: validateBadRequestErrorResponse,
-				401: validateUnauthorizedErrorResponse,
-				200: ajv.compile<{ message: IMessage }>({
-					type: 'object',
-					properties: {
-						message: { $ref: '#/components/schemas/IMessage' },
-						success: {
-							type: 'boolean',
-							enum: [true],
-						},
-					},
-					required: ['message', 'success'],
-					additionalProperties: false,
+			body: createValidatorFor(
+				z.object({
+					messageId: IMessageSchema.shape._id,
 				}),
+			),
+			response: {
+				200: createValidatorFor(
+					createSuccessResponseSchema(
+						z.object({
+							message: IMessageSchema,
+						}),
+					),
+				),
+				400: createValidatorFor(BadRequestErrorResponseSchema),
+				401: createValidatorFor(UnauthorizedErrorResponseSchema),
 			},
 		},
 		async function action() {
@@ -250,21 +215,15 @@ const chatEndpoints = API.v1
 		'chat.unPinMessage',
 		{
 			authRequired: true,
-			body: isChatUnpinMessageProps,
-			response: {
-				400: validateBadRequestErrorResponse,
-				401: validateUnauthorizedErrorResponse,
-				200: ajv.compile<void>({
-					type: 'object',
-					properties: {
-						success: {
-							type: 'boolean',
-							enum: [true],
-						},
-					},
-					required: ['success'],
-					additionalProperties: false,
+			body: createValidatorFor(
+				z.object({
+					messageId: IMessageSchema.shape._id,
 				}),
+			),
+			response: {
+				200: createValidatorFor(VoidSuccessResponseSchema),
+				400: createValidatorFor(BadRequestErrorResponseSchema),
+				401: createValidatorFor(UnauthorizedErrorResponseSchema),
 			},
 		},
 
@@ -284,22 +243,56 @@ const chatEndpoints = API.v1
 		'chat.update',
 		{
 			authRequired: true,
-			body: isChatUpdateProps,
+			body: createValidatorFor(
+				z
+					.union([
+						z.object({
+							text: z.string(),
+							previewUrls: z.array(z.string()).optional(),
+							customFields: z.record(z.any(), z.any()).optional(),
+						}),
+						z.object({
+							content: z.union([
+								z.object({
+									algorithm: z.literal('rc.v1.aes-sha2'),
+									ciphertext: z.string(),
+								}),
+								z.object({
+									algorithm: z.literal('rc.v2.aes-sha2'),
+									ciphertext: z.string(),
+									iv: z.string().meta({ description: 'Initialization Vector' }),
+									kid: z.string().meta({ description: 'ID of the key used to encrypt the message' }),
+								}),
+								z.object({
+									algorithm: z.literal('m.megolm.v1.aes-sha2'),
+									ciphertext: z.string(),
+								}),
+							]),
+							e2eMentions: z
+								.object({
+									e2eUserMentions: z.array(z.string()).optional(),
+									e2eChannelMentions: z.array(z.string()).optional(),
+								})
+								.optional(),
+						}),
+					])
+					.and(
+						z.object({
+							roomId: IRoomSchema.shape._id,
+							msgId: IMessageSchema.shape._id,
+						}),
+					),
+			),
 			response: {
-				400: validateBadRequestErrorResponse,
-				401: validateUnauthorizedErrorResponse,
-				200: ajv.compile<{ message: IMessage }>({
-					type: 'object',
-					properties: {
-						message: { $ref: '#/components/schemas/IMessage' },
-						success: {
-							type: 'boolean',
-							enum: [true],
-						},
-					},
-					required: ['message', 'success'],
-					additionalProperties: false,
-				}),
+				200: createValidatorFor(
+					createSuccessResponseSchema(
+						z.object({
+							message: IMessageSchema,
+						}),
+					),
+				),
+				400: createValidatorFor(BadRequestErrorResponseSchema),
+				401: createValidatorFor(UnauthorizedErrorResponseSchema),
 			},
 		},
 		async function action() {
@@ -922,9 +915,7 @@ API.v1.addRoute(
 	},
 );
 
-export type ChatEndpoints = ExtractRoutesFromAPI<typeof chatEndpoints>;
-
 declare module '@rocket.chat/rest-typings' {
 	// eslint-disable-next-line @typescript-eslint/naming-convention, @typescript-eslint/no-empty-interface
-	interface Endpoints extends ChatEndpoints {}
+	interface Endpoints extends ExtractRoutesFromAPI<typeof chatEndpoints> {}
 }
